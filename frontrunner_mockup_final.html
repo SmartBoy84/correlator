@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta name="author" content="Daniel Lie">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            background-color: #cccccc;
+        }
+    </style>
+</head>
+
+<body>
+    <input type="file" id="fileInput" accept=".csv">
+    <svg id="canvas" width="800" height="800"></svg>
+    <script>
+        const svg = d3.select('#canvas');
+        const ROAD_WIDTH = 40;
+        const CURVE_WIDTH = 2;
+        const CONTROL_POINT_RADIUS = 5;
+        const CONTROL_LINE_WIDTH = 2;
+        const ROAD_DASH_LENGTH = ROAD_WIDTH * 2;
+        const WIDTH = 800;
+        const HEIGHT = 800;
+
+        //raw coords of intersection INT_01
+        const rawIntersection = [
+        {x: 117.182625447579, y: -22.6060329793094},
+{x: 117.182695215016, y: -22.6061625550046},
+{x: 117.182829780395, y: -22.6061035510606},
+{x: 117.182890834196, y: -22.6060885156203},
+{x: 117.182949398387, y: -22.6060919832534},
+{x: 117.183004218438, y: -22.6061116512347},
+{x: 117.183083963766, y: -22.6061683434233},
+{x: 117.183295784863, y: -22.6063129635891},
+{x: 117.183362158261, y: -22.6062239068251},
+{x: 117.183472041488, y: -22.6060769207222},
+{x: 117.183417095012, y: -22.6060331960364},
+{x: 117.183337301059, y: -22.6059578743503},
+{x: 117.183286273774, y: -22.6058947074406},
+{x: 117.183230986921, y: -22.6058131548513},
+{x: 117.183184890231, y: -22.6057321621403},
+{x: 117.183158720149, y: -22.6056673697776},
+{x: 117.183140038347, y: -22.6056014305674},
+{x: 117.183115113069, y: -22.6054741575973},
+{x: 117.182960611358, y: -22.6054909358844},
+{x: 117.182806109648, y: -22.6055077141715},
+{x: 117.182816077814, y: -22.6056315104783},
+{x: 117.182818567424, y: -22.6056835701258},
+{x: 117.182813588203, y: -22.6057252268742},
+{x: 117.182796141482, y: -22.605755306785},
+{x: 117.182771225929, y: -22.6057865425735},
+{x: 117.182728863655, y: -22.6058166224844},
+{x: 117.182647873521, y: -22.6058605909881},
+{x: 117.182554425612, y: -22.6059057063392},
+{x: 117.182625447579, y: -22.6060329793094)
+}
+
+
+        ];
+
+        //raw coords of roads entering INT_01
+        //note: deduced this from truck paths where they enter/exit the intersection
+        const rawRoads = [
+            {
+                start: { x: 117.183738640042, y: -22.6065554761957 },
+                end: { x: 117.18333774841, y: -22.6062566687334 }
+            },
+            {
+                start: { x: 117.182215756136, y: -22.6063252877707 },
+                end: { x: 117.182667732053, y: -22.6061114706288 }
+            },
+        ];
+
+        //to fit the intersection to the window, scale the roads.
+        //find the bounding box of the original roads and intersection points
+        const allPoints = [...rawRoads.flatMap(road => [road.start, road.end]), ...rawIntersection];
+        const minX = d3.min(allPoints, d => d.x);
+        const maxX = d3.max(allPoints, d => d.x);
+        const minY = d3.min(allPoints, d => d.y);
+        const maxY = d3.max(allPoints, d => d.y);
+        
+        //determine the scale and offsets
+        const scaleX = WIDTH / (maxX - minX);
+        const scaleY = HEIGHT / (maxY - minY);
+        const scale = Math.min(scaleX, scaleY); //keep one scale for x&y to maintain aspect ratio
+        const offsetX = (WIDTH - (maxX - minX) * scale) / 2 - minX * scale;
+        const offsetY = (HEIGHT - (maxY - minY) * scale) / 2 - minY * scale;
+
+        //transform the road coordinates
+        const roads = rawRoads.map(road => ({
+            start: { x: road.start.x * scale + offsetX, y: road.start.y * scale + offsetY },
+            end: { x: road.end.x * scale + offsetX, y: road.end.y * scale + offsetY }
+        }));
+
+        //transform the intersection coordinates
+        const intersection = rawIntersection.map(point => ({
+            x: point.x * scale + offsetX,
+            y: point.y * scale + offsetY
+        }));
+
+        //calculate fixed (yellow) control points that extend parallel to the road ends
+        const controlPoints = roads.flatMap((road, index) => {
+            const dx = road.end.x - road.start.x;
+            const dy = road.end.y - road.start.y;
+            const length = Math.sqrt(dx * dx + dy * dy);
+            const extensionFactor = 0.2; // Adjust this factor as needed, not sure how frontrunner determines it
+            return [
+                { x: road.end.x, y: road.end.y, road: index, type: 'end-1' },
+                {
+                    x: road.end.x + (dx / length) * extensionFactor * length,
+                    y: road.end.y + (dy / length) * extensionFactor * length,
+                    road: index,
+                    type: 'end-2'
+                }
+            ];
+        });
+
+        //add the adjustable control points
+        const additionalControlPoints = [
+            { x: (roads[0].end.x * 2 + roads[1].end.x) / 3, y: (roads[0].end.y * 2 + roads[1].end.y) / 3, road: null, type: 'control' },
+            //the frontrunner default is to only have 2 adjustable control points
+            //but the user can add more. Paste in more rows here for more points.
+            //{ x: (roads[0].end.x + roads[1].end.x) / 2, y: (roads[0].end.y + roads[1].end.y) / 2, road: null, type: 'control' },
+            { x: (roads[0].end.x + roads[1].end.x * 2) / 3, y: (roads[0].end.y + roads[1].end.y * 2) / 3, road: null, type: 'control' }
+        ];
+
+        controlPoints.push(...additionalControlPoints);
+
+        //sort control points in the desired order for curve drawing
+        controlPoints.sort((a, b) => {
+            if (a.road === 0 && a.type === 'end-1') return -2;
+            if (a.road === 0 && b.road !== 0) return -1;
+            if (a.road === 1 && a.type === 'end-1') return 1;
+            if (a.road === 1 && a.type === 'end-2' && b.road === 1) return -1;
+            if (a.road === 1 && b.road !== 1) return 1;
+            if (a.road === null && b.road === 1) return -1;
+            return 0;
+        });
+
+        //draw the intersection in blue
+        svg.append('polygon')
+            .attr('points', intersection.map(d => [d.x, d.y].join(',')).join(' '))
+            .attr('fill', 'none')
+            .attr('stroke', 'blue')
+            .attr('stroke-width', 1);
+
+        //draw the grey/white roads that are outside the intersection
+        const roadLinesWhite = svg.selectAll('.road-white')
+            .data(roads)
+            .enter()
+            .append('line')
+            .attr('class', 'road-white')
+            .attr('x1', d => d.start.x)
+            .attr('y1', d => d.start.y)
+            .attr('x2', d => d.end.x)
+            .attr('y2', d => d.end.y)
+            .attr('stroke', 'white')
+            .attr('stroke-width', ROAD_WIDTH);
+
+        const roadLines = svg.selectAll('.road')
+            .data(roads)
+            .enter()
+            .append('line')
+            .attr('class', 'road')
+            .attr('x1', d => d.start.x)
+            .attr('y1', d => d.start.y)
+            .attr('x2', d => d.end.x)
+            .attr('y2', d => d.end.y)
+            .attr('stroke', '#aaaaaa')
+            .attr('stroke-width', ROAD_WIDTH)
+            .attr('stroke-dasharray', ROAD_DASH_LENGTH, ROAD_DASH_LENGTH);
+
+        //draw control lines that connect the control points directly
+        const controlLines = svg.append('g')
+            .attr('stroke', 'lime')
+            .attr('stroke-width', CONTROL_LINE_WIDTH);
+
+        //draw the actual curved truck path
+        const curve = svg.append('path')
+            .attr('fill', 'none')
+            .attr('stroke', '#ff3300')
+            .attr('stroke-width', CURVE_WIDTH);
+
+        //draw control points
+        const circles = svg.selectAll('.control-circle')
+            .data(controlPoints)
+            .enter()
+            .append('circle')
+            .attr('class', 'control-circle')
+            .attr('r', CONTROL_POINT_RADIUS)
+            .attr('fill', d => d.type === 'control' ? 'lime' : 'yellow')
+            .attr('stroke', 'black')
+            .attr('stroke-width', 1)
+            .call(d3.drag()
+                .on('drag', function (event, d) {
+                    dragHandler(event, d);
+                })
+            );
+
+        //handler function to determine which control points are allowed to be dragged
+        function dragHandler(event, d, index) {
+            //can't drag the end control points (teh yellow ones)
+            if (d.type !== 'end-1' && d.type !== 'end-2') {
+                d.x = event.x;
+                d.y = event.y;
+            }
+            updateCurve();
+        }
+
+        //calculate the new curve, control lines and control points when control points are dragged
+        function updateCurve() {
+            const bezierCurve = getBezierCurve(controlPoints, 0.01);
+            var line = d3.line().x(x).y(y)
+            curve.attr('d', line(bezierCurve));
+
+            circles.attr('cx', d => d.x)
+                .attr('cy', d => d.y);
+
+            controlLines.selectAll('line')
+                .data(getControlLinesData())
+                .join('line')
+                .attr('x1', d => d[0].x)
+                .attr('y1', d => d[0].y)
+                .attr('x2', d => d[1].x)
+                .attr('y2', d => d[1].y);
+        }
+
+        function x(d) { return d.x; }
+        function y(d) { return d.y; }
+        
+        /*calculate an n-degree bezier. beware, magic-------------------------*/
+        function getBezierCurve(points, step) {
+            const n = points.length - 1;
+            const bezierCurve = [];
+            for (let t = 0; t <= 1; t += step) {
+                let x = 0, y = 0;
+                for (let i = 0; i <= n; i++) {
+                    const binomialCoeff = binomialCoefficient(n, i);
+                    const term = Math.pow(1 - t, n - i) * Math.pow(t, i);
+                    x += binomialCoeff * term * points[i].x;
+                    y += binomialCoeff * term * points[i].y;
+                }
+                bezierCurve.push({ x, y });
+            }
+            return bezierCurve;
+        }
+
+        function binomialCoefficient(n, k) {
+            let coeff = 1;
+            for (let i = n - k + 1; i <= n; i++) coeff *= i;
+            for (let i = 1; i <= k; i++) coeff /= i;
+            return coeff;
+        }
+        /*--------------------------------------------------------------------*/
+
+
+        function getControlLinesData() {
+            const linesData = [];
+            for (let i = 0; i < controlPoints.length - 1; i++) {
+                linesData.push([controlPoints[i], controlPoints[i + 1]]);
+            }
+            return linesData;
+        }
+
+        updateCurve();
+    </script>
+</body>
+
+</html>
