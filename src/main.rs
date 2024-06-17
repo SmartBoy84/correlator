@@ -1,4 +1,5 @@
 mod parser;
+mod model;
 use parser::*;
 use rand::{self, Rng};
 
@@ -12,36 +13,31 @@ fn generate_random_rgb() -> RGBColor {
     let r = rng.gen_range(0..=255);
     let g = rng.gen_range(0..=255);
     let b = rng.gen_range(0..=255);
-    RGBColor(r,g,b)
+    RGBColor(r, g, b)
 }
-
 
 fn main() -> Result<(), anyhow::Error> {
     let data = DataFile::create_from_files(&std::env::args().skip(1).collect()).unwrap();
+    let truck = &data.trucks[0];
+    let frame = &truck.timeframes[0];
+    println!("{:?}", frame.acceleration);
 
-    let root = BitMapBackend::new(
-        "output.png",
-        (4000, 4000),
-    )
-    .into_drawing_area();
-    root.fill(&BLACK)?;
+    let correlate = BitMapBackend::new("valaccel.png", (2500, 2500)).into_drawing_area();
+    correlate.fill(&WHITE)?;
 
-    for truck in data.trucks {
+    frame.acceleration.graph(&correlate, BLACK)?;
+    frame.velocity.graph(&correlate, GREEN)?;
 
-let color = generate_random_rgb();
+    // let truck = &data.trucks[12];
+    let path_map = BitMapBackend::new("path_map.png", (2500, 2500)).into_drawing_area();
 
     let region = &truck.timeframes[0];
     let ((x_min, x_max), (y_min, y_max)) = region.get_range();
-    let mut chart = ChartBuilder::on(&root).build_cartesian_2d(x_min..x_max, y_min..y_max)?;
-    chart.draw_series(
-        truck
-            .timeframes
-            .iter()
-            .map(|a| a.points.iter())
-            .flatten()
-            .map(|DataPoint { x, y, .. }| Circle::new((*x, *y), 2, color.filled())),
-    )?;
-    chart.configure_series_labels().draw()?;
-    }
-    todo!();
+    let mut chart = ChartBuilder::on(&path_map).build_cartesian_2d(x_min..x_max, y_min..y_max)?;
+    // println!("{x_min} {x_max} {y_min} {y_max}");
+    chart.draw_series(LineSeries::new(
+        frame.points.iter().map(|DataPoint { x, y, .. }| (*x, *y)),
+        WHITE,
+    ))?;
+    Ok(())
 }

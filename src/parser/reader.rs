@@ -30,6 +30,7 @@ impl DataFile {
         let mut data = Self { trucks: vec![] };
 
         for file_path in paths {
+            println!("{:?}", file_path);
             for data_point in fs::read_to_string(&file_path)?
                 .trim()
                 .split("\n")
